@@ -1,0 +1,18 @@
+# 本地演示：docker compose up --build 后访问 http://localhost:8080/docs
+# （真实集群里由 API server 按 CRD 的 conversion.webhook 配置回调 /convert。）
+name: backup-policy-conversion
+
+services:
+  webhook:
+    build: .
+    image: backup-policy-converter:local
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    healthcheck:
+      # slim 镜像没有 curl/wget，用 python 探活
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8080/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s

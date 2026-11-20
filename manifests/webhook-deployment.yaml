@@ -1,0 +1,72 @@
+# 可选：把 webhook 部署进真实集群（本地 Docker Compose 演示不需要本文件）。
+# 镜像需先构建并推送到集群可达的镜像仓库：
+#   docker build -t <registry>/backup-policy-converter:1.0.0 .
+#   docker push <registry>/backup-policy-converter:1.0.0
+# 证书：生产环境建议 cert-manager（见 crd-backuppolicy.yaml 顶部注释）；
+# 本清单假设已通过某种方式把 TLS 证书挂进 Pod（secretName: converter-tls），
+# 并让容器以 --ssl 参数或反向代理终止 TLS。简单起见，这里用 sidecar 之外的
+# 常见做法：Service 443 -> 容器 8443（uvicorn 直接持证书）。
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: backup-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backup-policy-converter
+  namespace: backup-system
+  labels:
+    app: backup-policy-converter
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backup-policy-converter
+  template:
+    metadata:
+      labels:
+        app: backup-policy-converter
+    spec:
+      containers:
+        - name: webhook
+          image: registry.example.com/backup-policy-converter:1.0.0
+          args:
+            - uvicorn
+            - app.main:app
+            - --host=0.0.0.0
+            - --port=8443
+            - --ssl-certfile=/tls/tls.crt
+            - --ssl-keyfile=/tls/tls.key
+          ports:
+            - containerPort: 8443
+          volumeMounts:
+            - name: tls
+              mountPath: /tls
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              scheme: HTTPS
+              path: /healthz
+              port: 8443
+          livenessProbe:
+            httpGet:
+              scheme: HTTPS
+              path: /healthz
+              port: 8443
+      volumes:
+        - name: tls
+          secret:
+            secretName: converter-tls
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backup-policy-converter
+  namespace: backup-system
+spec:
+  selector:
+    app: backup-policy-converter
+  ports:
+    - port: 443
+      targetPort: 8443

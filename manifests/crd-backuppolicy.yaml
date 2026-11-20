@@ -1,0 +1,109 @@
+# BackupPolicy CRD：v1beta1 为存储版本，v1alpha1 为旧版（值班员旧工具）。
+# 版本间转换由本仓库的 webhook 完成（FastAPI，POST /convert）。
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: backuppolicies.backup.example.com
+  # 若用 cert-manager 注入 CA，打开下一行并删除 webhook.clientConfig.caBundle：
+  # annotations:
+  #   cert-manager.io/inject-ca-from: backup-system/backup-policy-converter-cert
+spec:
+  group: backup.example.com
+  scope: Namespaced
+  names:
+    plural: backuppolicies
+    singular: backuppolicy
+    shortNames: [bpp]
+    kind: BackupPolicy
+  conversion:
+    strategy: Webhook
+    webhook:
+      conversionReviewVersions: ["v1"]
+      clientConfig:
+        service:
+          name: backup-policy-converter
+          namespace: backup-system
+          path: /convert
+          port: 443
+        # 必填：签发 webhook 服务端证书的 CA（base64 编码的 PEM）。
+        # 本地 Docker Compose 演示不经过 API server，用不到它；
+        # 上真实集群前用 cert-manager 注入或手工填入。
+        caBundle: ""
+  versions:
+    # ---- 存储版本：支持按目标单独设置保留份数 ----
+    - name: v1beta1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                defaultRetention:
+                  type: integer
+                  minimum: 0
+                  default: 3
+                  description: 默认保留份数；目标未单独设置时生效。
+                targets:
+                  type: array
+                  default: []
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys: [name]
+                  items:
+                    type: object
+                    required: [name]
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                      retention:
+                        type: integer
+                        minimum: 0
+                        description: 该目标单独的保留份数；缺省表示跟随 defaultRetention。
+            status:
+              type: object
+              properties:
+                observedGeneration:
+                  type: integer
+                message:
+                  type: string
+      additionalPrinterColumns:
+        - name: Default
+          type: integer
+          jsonPath: .spec.defaultRetention
+    # ---- 旧版：只有默认份数 + 目标名列表 ----
+    - name: v1alpha1
+      served: true
+      storage: false
+      deprecated: true
+      deprecationWarning: "v1alpha1 已废弃，请迁移到 v1beta1（支持按目标单独设置保留份数）"
+      subresources:
+        status: {}
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                defaultRetention:
+                  type: integer
+                  minimum: 0
+                  default: 3
+                targets:
+                  type: array
+                  default: []
+                  items:
+                    type: string
+                    minLength: 1
+            status:
+              type: object
+              properties:
+                observedGeneration:
+                  type: integer
+                message:
+                  type: string
